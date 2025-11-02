@@ -57,6 +57,30 @@ public class ChatViewModel extends AndroidViewModel {
         repository.sendMessage(text);
     }
 
+    public void likeMessage(int messageId, boolean isLiked) {
+        repository.likeMessage(messageId, isLiked);
+    }
+
+    public void getLikeStateAndToggle(int messageId, boolean shouldLike) {
+        repository.getLikeStateAndToggle(messageId, shouldLike);
+    }
+
+    public void editMessage(int messageId, String newText) {
+        repository.editMessage(messageId, newText);
+    }
+
+    public void deleteMessage(int messageId) {
+        repository.deleteMessage(messageId);
+    }
+
+    public void sendImageMessage(String filePath, String caption) {
+        repository.sendImageMessage(filePath, caption);
+    }
+
+    public void sendDocumentMessage(String filePath, String fileName, long fileSize) {
+        repository.sendDocumentMessage(filePath, fileName, fileSize);
+    }
+
     // ** FIX FOR ChatActivity ERROR **
     // This method is required by ChatActivity to trigger cleanup on exit.
     public void stopNetwork() {

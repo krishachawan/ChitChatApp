@@ -51,6 +51,11 @@ public class NetworkManager {
 
     public interface MessageReceiver {
         void onMessageReceived(String sender, String text);
+        void onMessageLiked(String uniqueId, boolean isLiked);
+        void onMessageEdited(String uniqueId, String newText);
+        void onMessageDeleted(String uniqueId);
+        void onImageReceived(String uniqueId, String caption, String base64Data);
+        void onDocumentReceived(String uniqueId, String fileName, long fileSize, String base64Data);
     }
 
     public NetworkManager(Context context, MessageReceiver receiver) {
@@ -162,10 +167,67 @@ public class NetworkManager {
                 String line;
                 // Main reading loop to receive messages from this client
                 while ((line = reader.readLine()) != null) {
-                    Log.d(TAG, "Host received from " + username + ": " + line);
-                    // Broadcast the received message to all other clients and the host's UI
-                    broadcastMessage(username, line);
-                    messageReceiver.onMessageReceived(username, line);
+                    // Skip empty lines
+                    if (line.trim().isEmpty()) {
+                        continue;
+                    }
+                    
+                    // Log truncated version for very long messages (like base64)
+                    if (line.length() > 100) {
+                        Log.d(TAG, "Host received from " + username + " (truncated): " + line.substring(0, 100) + "... (length: " + line.length() + ")");
+                    } else {
+                        Log.d(TAG, "Host received from " + username + ": " + line);
+                    }
+                    
+                    // Handle special commands (like, edit, delete)
+                    if (line.startsWith("LIKE:") || line.startsWith("UNLIKE:") || 
+                        line.startsWith("EDIT:") || line.startsWith("DELETE:")) {
+                        // Broadcast command to all clients (including sender for sync)
+                        broadcastCommand(line);
+                        // Process locally
+                        processCommand(line);
+                    } else if (line.startsWith("IMG:") || line.startsWith("DOC:")) {
+                        // Media messages - broadcast to all clients
+                        broadcastCommand(line);
+                        // Process locally
+                        if (line.startsWith("IMG:")) {
+                            String content = line.substring(4);
+                            int firstColon = content.indexOf(":");
+                            int secondColon = content.indexOf(":", firstColon + 1);
+                            if (firstColon > 0 && secondColon > firstColon) {
+                                String uniqueId = content.substring(0, firstColon);
+                                String caption = content.substring(firstColon + 1, secondColon);
+                                String base64Data = content.substring(secondColon + 1);
+                                
+                                if (base64Data != null && !base64Data.isEmpty()) {
+                                    messageReceiver.onImageReceived(uniqueId, caption, base64Data);
+                                } else {
+                                    Log.e(TAG, "Host: Received IMG: but base64 data is empty");
+                                }
+                            }
+                        } else if (line.startsWith("DOC:")) {
+                            String content = line.substring(4);
+                            int firstColon = content.indexOf(":");
+                            int secondColon = content.indexOf(":", firstColon + 1);
+                            int thirdColon = content.indexOf(":", secondColon + 1);
+                            if (firstColon > 0 && secondColon > firstColon && thirdColon > secondColon) {
+                                String uniqueId = content.substring(0, firstColon);
+                                String fileName = content.substring(firstColon + 1, secondColon);
+                                long fileSize = Long.parseLong(content.substring(secondColon + 1, thirdColon));
+                                String base64Data = content.substring(thirdColon + 1);
+                                
+                                if (base64Data != null && !base64Data.isEmpty()) {
+                                    messageReceiver.onDocumentReceived(uniqueId, fileName, fileSize, base64Data);
+                                } else {
+                                    Log.e(TAG, "Host: Received DOC: but base64 data is empty");
+                                }
+                            }
+                        }
+                    } else {
+                        // Regular message - broadcast and process
+                        broadcastMessage(username, line);
+                        messageReceiver.onMessageReceived(username, line);
+                    }
                 }
             } catch (SocketException e) {
                 Log.e(TAG, "Client handling disconnected error for " + username, e);
@@ -212,6 +274,42 @@ public class NetworkManager {
             }
         }
     }
+    
+    private void broadcastCommand(String command) {
+        synchronized (clientWriters) {
+            if (clientWriters.isEmpty()) {
+                return;
+            }
+            List<PrintWriter> currentWriters = new ArrayList<>(clientWriters);
+            for (PrintWriter writer : currentWriters) {
+                try {
+                    writer.println(command);
+                    writer.flush();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error broadcasting command: " + e.getMessage(), e);
+                    clientWriters.remove(writer);
+                }
+            }
+        }
+    }
+    
+    private void processCommand(String command) {
+        if (command.startsWith("LIKE:")) {
+            String uniqueId = command.substring(5);
+            messageReceiver.onMessageLiked(uniqueId, true);
+        } else if (command.startsWith("UNLIKE:")) {
+            String uniqueId = command.substring(7);
+            messageReceiver.onMessageLiked(uniqueId, false);
+        } else if (command.startsWith("EDIT:")) {
+            String[] parts = command.substring(5).split(":", 2);
+            if (parts.length == 2) {
+                messageReceiver.onMessageEdited(parts[0], parts[1]);
+            }
+        } else if (command.startsWith("DELETE:")) {
+            String uniqueId = command.substring(7);
+            messageReceiver.onMessageDeleted(uniqueId);
+        }
+    }
 
     // --- CLIENT METHODS ---
 
@@ -235,10 +333,100 @@ public class NetworkManager {
                 String line;
                 // Main reading loop to receive messages from the Host
                 while ((line = clientReader.readLine()) != null) {
-                    Log.d(TAG, "Client received from Host: " + line); // Log the raw received data
-
-                    // Handle join messages and regular messages
-                    if (line.contains(": ")) {
+                    // Skip empty lines
+                    if (line.trim().isEmpty()) {
+                        continue;
+                    }
+                    
+                    // Log truncated version for very long messages (like base64)
+                    if (line.length() > 100) {
+                        Log.d(TAG, "Client received from Host (truncated): " + line.substring(0, 100) + "... (length: " + line.length() + ")");
+                    } else {
+                        Log.d(TAG, "Client received from Host: " + line);
+                    }
+                    
+                    // Check for special commands first
+                    if (line.startsWith("LIKE:")) {
+                        String uniqueId = line.substring(5);
+                        messageReceiver.onMessageLiked(uniqueId, true);
+                        Log.d(TAG, "Received like command for message: " + uniqueId);
+                    } else if (line.startsWith("UNLIKE:")) {
+                        String uniqueId = line.substring(7);
+                        messageReceiver.onMessageLiked(uniqueId, false);
+                        Log.d(TAG, "Received unlike command for message: " + uniqueId);
+                    } else if (line.startsWith("EDIT:")) {
+                        String[] editParts = line.substring(5).split(":", 2);
+                        if (editParts.length == 2) {
+                            messageReceiver.onMessageEdited(editParts[0], editParts[1]);
+                            Log.d(TAG, "Received edit command for message: " + editParts[0]);
+                        }
+                    } else if (line.startsWith("DELETE:")) {
+                        String uniqueId = line.substring(7);
+                        messageReceiver.onMessageDeleted(uniqueId);
+                        Log.d(TAG, "Received delete command for message: " + uniqueId);
+                    } else if (line.startsWith("IMG:")) {
+                        // Image message: IMG:uniqueId:caption:base64data
+                        // Base64 might be on same line (if NO_WRAP) or might span lines
+                        // Read the entire line first
+                        String fullLine = line;
+                        
+                        // Try to parse from the current line
+                        String content = fullLine.substring(4);
+                        int firstColon = content.indexOf(":");
+                        int secondColon = content.indexOf(":", firstColon + 1);
+                        if (firstColon > 0 && secondColon > firstColon) {
+                            String uniqueId = content.substring(0, firstColon);
+                            String caption = content.substring(firstColon + 1, secondColon);
+                            String base64Data = content.substring(secondColon + 1);
+                            
+                            // Validate base64 data isn't empty
+                            if (base64Data != null && !base64Data.isEmpty()) {
+                                messageReceiver.onImageReceived(uniqueId, caption, base64Data);
+                                Log.d(TAG, "Received image message: " + uniqueId + " (base64 length: " + base64Data.length() + ")");
+                            } else {
+                                Log.e(TAG, "Received IMG: but base64 data is empty");
+                            }
+                        } else {
+                            Log.e(TAG, "Failed to parse IMG: message - invalid format");
+                        }
+                    } else if (line.startsWith("DOC:")) {
+                        // Document message: DOC:uniqueId:fileName:fileSize:base64data
+                        String fullLine = line;
+                        
+                        String content = fullLine.substring(4);
+                        int firstColon = content.indexOf(":");
+                        int secondColon = content.indexOf(":", firstColon + 1);
+                        int thirdColon = content.indexOf(":", secondColon + 1);
+                        if (firstColon > 0 && secondColon > firstColon && thirdColon > secondColon) {
+                            String uniqueId = content.substring(0, firstColon);
+                            String fileName = content.substring(firstColon + 1, secondColon);
+                            long fileSize = Long.parseLong(content.substring(secondColon + 1, thirdColon));
+                            String base64Data = content.substring(thirdColon + 1);
+                            
+                            // Validate base64 data isn't empty
+                            if (base64Data != null && !base64Data.isEmpty()) {
+                                messageReceiver.onDocumentReceived(uniqueId, fileName, fileSize, base64Data);
+                                Log.d(TAG, "Received document message: " + uniqueId + " (base64 length: " + base64Data.length() + ")");
+                            } else {
+                                Log.e(TAG, "Received DOC: but base64 data is empty");
+                            }
+                        } else {
+                            Log.e(TAG, "Failed to parse DOC: message - invalid format");
+                        }
+                    } else if (line.startsWith("MSG:")) {
+                        // Regular message with MSG: prefix
+                        String content = line.substring(4);
+                        int colonIndex = content.indexOf(":");
+                        if (colonIndex > 0) {
+                            String uniqueId = content.substring(0, colonIndex);
+                            String messageText = content.substring(colonIndex + 1);
+                            messageReceiver.onMessageReceived(null, "MSG:" + uniqueId + ":" + messageText);
+                            Log.d(TAG, "Received MSG: message: " + uniqueId);
+                        } else {
+                            Log.e(TAG, "Failed to parse MSG: message - invalid format");
+                        }
+                    } else if (line.contains(": ")) {
+                        // Legacy format: "sender: message"
                         String[] parts = line.split(": ", 2);
                         if (parts.length == 2) {
                             messageReceiver.onMessageReceived(parts[0], parts[1]);
@@ -247,8 +435,14 @@ public class NetworkManager {
                             Log.e(TAG, "Failed to parse message: " + line + ". Unexpected format.");
                         }
                     } else {
-                        // Fallback for messages without delimiter (shouldn't happen but handle gracefully)
-                        Log.w(TAG, "Received message without delimiter, treating as system message: " + line);
+                        // Check if this might be part of a base64 string that was split (shouldn't happen with NO_WRAP, but be safe)
+                        if (line.length() > 50 && !line.contains(" ") && !line.contains(":")) {
+                            // Likely a base64 fragment - ignore it
+                            Log.w(TAG, "Ignoring possible base64 fragment: " + line.substring(0, Math.min(50, line.length())) + "...");
+                        } else {
+                            // Fallback for messages without delimiter
+                            Log.w(TAG, "Received message without delimiter, treating as system message: " + line);
+                        }
                     }
                 }
                 // If we exit the loop, connection was closed
@@ -323,6 +517,44 @@ public class NetworkManager {
                     // Show user-friendly error on UI thread
                     new android.os.Handler(context.getMainLooper()).post(() ->
                             Toast.makeText(context, "Not connected. Please reconnect.", Toast.LENGTH_SHORT).show());
+                }
+            }
+        });
+    }
+    
+    public void sendLike(String uniqueId, boolean isLiked) {
+        String command = isLiked ? "LIKE:" + uniqueId : "UNLIKE:" + uniqueId;
+        sendCommand(command);
+    }
+    
+    public void sendEdit(String uniqueId, String newText) {
+        String command = "EDIT:" + uniqueId + ":" + newText;
+        sendCommand(command);
+    }
+    
+    public void sendDelete(String uniqueId) {
+        String command = "DELETE:" + uniqueId;
+        sendCommand(command);
+    }
+    
+    private void sendCommand(String command) {
+        executor.execute(() -> {
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                // Host - broadcast command
+                broadcastCommand(command);
+                processCommand(command);
+            } else {
+                // Client - send to host
+                PrintWriter writer = clientWriter;
+                Socket socket = clientSocket;
+                if (writer != null && socket != null && !socket.isClosed() && socket.isConnected()) {
+                    try {
+                        writer.println(command);
+                        writer.flush();
+                        Log.d(TAG, "Client sent command: " + command);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error sending command: " + e.getMessage(), e);
+                    }
                 }
             }
         });
