@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp">
+
+    <!-- This is the chat bubble -->
+    <LinearLayout
+        android:id="@+id/chat_bubble_sent_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentEnd="true"
+        android:layout_marginStart="80dp"
+        android:layout_marginEnd="8dp"
+        android:background="@drawable/chat_bubble_sent"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <!-- This is the main message text -->
+        <TextView
+            android:id="@+id/text_message_body"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="This is the sent message text"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <!-- This is the timestamp -->
+        <TextView
+            android:id="@+id/text_message_timestamp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="4dp"
+            android:text="10:00 PM"
+            android:textColor="#C0FFFFFF"
+            android:textSize="10sp" />
+
+    </LinearLayout>
+
+</RelativeLayout>
